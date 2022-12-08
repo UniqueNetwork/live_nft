@@ -1,0 +1,29 @@
+
+{
+  "cities": [{
+    "name": "Moscow",
+    "filename": "1.jpg",
+    "lat": "55.752206",
+    "lon": "37.615576"
+  }, {
+    "name": "Tokio",
+    "filename": "2.jpg",
+    "lat": "35.681729",
+    "lon": "139.753927"
+  }, {
+    "name": "Beijing",
+    "filename": "3.jpg",
+    "lat": "39.901850",
+    "lon": "116.391441"
+  }, {
+    "name": "Buenos Aires",
+    "filename": "4.jpg",
+    "lat": "-34.615672",
+    "lon": "-58.435166"
+  }, {
+    "name": "New York",
+    "filename": "5.jpg",
+    "lat": "40.714606",
+    "lon": "-74.002800"
+  }]
+}
