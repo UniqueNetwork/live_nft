@@ -20,10 +20,22 @@ import {Address} from '@unique-nft/utils'
 
 import {createCanvas, loadImage, registerFont} from 'canvas'
 import axios from 'axios'
-import {promises as fs} from 'fs'
+import {promises as fs, readFileSync} from 'fs'
 import {CronJob} from 'cron'
 import { formatInTimeZone } from 'date-fns-tz'
 import localeEn from 'date-fns/locale/en-GB'
+
+interface CityConfig {
+  name: string;
+  filename: string;
+  lat: string;
+  lon: string;
+}
+interface Config {
+  cities: CityConfig[]
+}
+const config = JSON.parse(readFileSync('./files/config.json').toString());
+console.log('config', config);
 
 import * as plural from 'plural-ru'
 
@@ -52,31 +64,59 @@ const splitStringToGroupsOf3 = (str: string): string[] =>
 /////////////////////////////////////////////////////
 
 interface IData {
-  param: number
+  name: string;
+  currentTime: number;
+  weather: {
+    description: string,
+    icon: string,
+  };
+  temp: string;
+  wind: string;
+  filename?: string;
 }
 
-const getData = async (apiToken: string, apiUrl: string): Promise<IData> => {
+const getData = async (cityConfig: CityConfig): Promise<IData> => {
+  const openweathermapKey = getStringEnvVar('OPENWEATHERMAP_KEY');
+  const {lat, lon} = cityConfig;
+  const apiUrl = `https://api.openweathermap.org/data/2.5/onecall?APPID=${openweathermapKey}&lat=${lat}&lon=${lon}&lang=en&units=metric&exclude=minutely,hourly,daily`;
   const [response] = await Promise.all([
     axios({
       method: 'get',
       url: apiUrl,
-      headers: {
-        'Authorization': `Bearer ${apiToken}`
-      }
     }),
   ])
 
-  const result = {
-    ...response.data
-  } as any
+  console.log('response.data', JSON.stringify(response.data, null, 2));
 
-  assert(typeof result.param === 'number', 'Data from API is not valid')
+  const {current, timezone_offset} = response.data;
+  const weather = current.weather[0];
 
-  return result as IData
+  let temp = `${Math.round(current.temp)}`;
+  if (current.feels_like && current.feels_like !== current.temp) {
+    temp = `${temp} / ${Math.round(current.feels_like)}`;
+  }
+
+  let wind = `${current.wind_speed} m/s`;
+
+  return {
+    name: cityConfig.name,
+    currentTime: +current.dt + timezone_offset,
+    weather: {
+      description: weather.description,
+      icon: weather.icon,
+    },
+    temp,
+    wind,
+    filename: cityConfig.filename,
+  }
 }
 
 const DataToPropertyMap: { [K in keyof IData]: string } = {
-  param: 'a.0',
+  name: 'a.1',
+  currentTime: 'a.2',
+  weather: 'a.3',
+  temp: 'a.4',
+  wind: 'a.5',
 }
 
 /////////////////////////////////////////////////////
@@ -85,19 +125,26 @@ const DataToPropertyMap: { [K in keyof IData]: string } = {
 
 
 const generateAndSaveResultImage = async (data: IData, filesDir: string, imagesDir: string) => {
-  const image = await loadImage(`${filesDir}/template.png`)
+  const imageScale = 0.25;
+
+  const image = await loadImage(`${filesDir}/images/${data.filename}`)
   registerFont(`${filesDir}/Rubik-Medium.ttf`, {family: 'Rubik', weight: 'Medium'})
 
-  const canvas = createCanvas(image.width, image.height)
+  const canvas = createCanvas(image.width*imageScale, image.height*imageScale)
 
   const ctx = canvas.getContext('2d')
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+  if (data.weather) {
+    const weatherIcon = await loadImage(`https://openweathermap.org/img/wn/${data.weather.icon}@2x.png`)
+    ctx.drawImage(weatherIcon, 0, 0, weatherIcon.width, weatherIcon.height);
+  }
 
   ctx.font = '36px Rubik Medium'
   ctx.fillStyle = 'white'
   ctx.textAlign = 'right'
 
-  ctx.fillText(data.param.toString(), 980, 250)
+  //ctx.fillText(data.name, 0, 0)
 
   const buffer = canvas.toBuffer('image/png')
 
@@ -112,6 +159,7 @@ const generateAndSaveResultImage = async (data: IData, filesDir: string, imagesD
   console.log(`Image generated, file size: ${buffer.byteLength} bytes`)
 
   return buffer
+
 }
 
 
@@ -125,7 +173,7 @@ const testImageGeneration = async () => {
   const imagesDir = getStringEnvVar('OUTPUT_IMAGES_DIR')
 
   //get new data
-  const data = await getData(apiUrl, apiToken)
+  const data = await getData(config.cities[0])
   console.log('New data from the API:')
   console.dir(data)
 
@@ -137,10 +185,9 @@ const testImageGeneration = async () => {
 // Token data updater
 /////////////////////////////////////////////////////
 
-const updateTheTokenWithTheNewImage = async () => {
-  console.log('Starting token updating process...')
+const updateTheTokenWithTheNewImage = async (index: number) => {
+  console.log('Starting token updating process...', index);
 
-  const apiToken = getStringEnvVar('API_KEY')
   const apiUrl = getStringEnvVar('API_URL')
 
   const mnemonic = getStringEnvVar('COLLECTION_ADMIN_MNEMONIC')
@@ -171,26 +218,33 @@ const updateTheTokenWithTheNewImage = async () => {
 
   assert(balanceValueBefore > 1, `Balance of the ${address} account is lower then 1`)
 
+  const cityData = config.cities[index];
+
   //get new data
-  const data = await getData(apiToken, apiUrl)
+  const data = await getData(cityData);
 
   // generate new image for the token
   const file = await generateAndSaveResultImage(data, 'files', imagesDir)
 
   // update the image
   const ipfsUploadResult = await specialSdkInstanceForIPFS.ipfs.uploadFile({file})
-  // console.log(ipfsUploadResult)
 
   // update the token itself
   const formattedDateTime = formatInTimeZone(new Date(), 'UTC', `d MMMM yyyy HH:mm:ss`, {locale: localeEn})
+
+  const formattedLocalTime = formatInTimeZone(new Date(data.currentTime * 1000), 'UTC', `d MMMM yyyy HH:mm:ss`, {locale: localeEn})
 
   const tokenUpdateResult = await sdk.tokens.setProperties.submitWaitResult({
     address,
     collectionId,
     tokenId,
     properties: [
-      {key: DataToPropertyMap.param, value: `{"_": "${data.param}"}`},
-      {key: 'a.1', value: `{"_": "${formattedDateTime}"}`},
+      {key: 'a.0', value: `{"_": "${formattedDateTime}"}`},
+      {key: DataToPropertyMap.name, value: `{"_": "${data.name}"}`},
+      {key: DataToPropertyMap.currentTime, value: `{"_": "${formattedLocalTime}"}`},
+      {key: DataToPropertyMap.weather, value: `{"_": "${data.weather ? data.weather.description : ''}"}`},
+      {key: DataToPropertyMap.temp, value: `{"_": "${data.temp}"}`},
+      {key: DataToPropertyMap.wind, value: `{"_": "${data.wind}"}`},
       {key: 'i.i', value: ipfsUploadResult.cid}
     ]
   })
@@ -217,7 +271,7 @@ const runCronJob = async () => {
       await new Promise(r => setTimeout(r, 500))
       console.log('Starting task on cron:', formatInTimeZone(new Date(), 'Europe/Moscow', `HH:mm:ss dd.MM.yyyy 'MSK'`), `next job at`, job.nextDate().toFormat(`HH:mm:ss dd.MM.yyyy 'MSK'`))
 
-      await updateTheTokenWithTheNewImage()
+      await updateTheTokenWithTheNewImage(0)
 
       console.log('Next cron job is at', job.nextDate().toFormat(`HH:mm:ss dd.MM.yyyy 'MSK'`), '\n')
     },
@@ -270,11 +324,27 @@ const createCollectionAndToken = async () => {
       attributesSchemaVersion: '1.0.0',
       attributesSchema: {
         0: {
-          name: {_: 'param'},
+          name: {_: 'Updated at'},
           type: 'string', isArray: false, optional: false,
         },
         1: {
-          name: {_: 'Updated at'},
+          name: {_: 'City name'},
+          type: 'string', isArray: false, optional: false,
+        },
+        2: {
+          name: {_: 'Current local time'},
+          type: 'string', isArray: false, optional: false,
+        },
+        3: {
+          name: {_: 'Weather'},
+          type: 'string', isArray: false, optional: false,
+        },
+        4: {
+          name: {_: 'Temperature'},
+          type: 'string', isArray: false, optional: false,
+        },
+        5: {
+          name: {_: 'Wind'},
           type: 'string', isArray: false, optional: false,
         },
       }
@@ -288,6 +358,10 @@ const createCollectionAndToken = async () => {
       {key: 'd', permission: PERMISSION_ALL_TRUE},
       {key: 'a.0', permission: PERMISSION_ALL_TRUE},
       {key: 'a.1', permission: PERMISSION_ALL_TRUE},
+      {key: 'a.2', permission: PERMISSION_ALL_TRUE},
+      {key: 'a.3', permission: PERMISSION_ALL_TRUE},
+      {key: 'a.4', permission: PERMISSION_ALL_TRUE},
+      {key: 'a.5', permission: PERMISSION_ALL_TRUE},
     ]
   })
 
@@ -324,6 +398,7 @@ const createCollectionAndToken = async () => {
 }
 
 program
+  .option('--index <number>', 'city index', '0')
   .option('--createCollectionAndToken', 'Create new collection and mint a token and print out IDs.')
   .option('--update', 'Update existing NFT. Requires COLLECTION_ID and TOKEN_ID env vars be set.')
   .option('--cron', 'Starts task runner which will periodically update existing NFT. Requires COLLECTION_ID and TOKEN_ID env vars be set.')
@@ -339,7 +414,7 @@ const run = async () => {
   } else if (options.createCollectionAndToken) {
     await createCollectionAndToken()
   } else if (options.update) {
-    await updateTheTokenWithTheNewImage()
+    await updateTheTokenWithTheNewImage(+options.index || 0)
   } else if (options.cron) {
     await runCronJob()
   } else {
