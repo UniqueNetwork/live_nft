@@ -20,7 +20,7 @@ import {Address} from '@unique-nft/utils'
 
 import {createCanvas, loadImage, registerFont} from 'canvas'
 import axios from 'axios'
-import {promises as fs, readFileSync} from 'fs'
+import {promises as fs} from 'fs'
 import {CronJob} from 'cron'
 import { formatInTimeZone } from 'date-fns-tz'
 import localeEn from 'date-fns/locale/en-GB'
@@ -31,11 +31,7 @@ interface CityConfig {
   lat: string;
   lon: string;
 }
-interface Config {
-  cities: CityConfig[]
-}
-const config = JSON.parse(readFileSync('./files/config.json').toString());
-console.log('config', config);
+import config from '../files/config.json';
 
 import * as plural from 'plural-ru'
 
