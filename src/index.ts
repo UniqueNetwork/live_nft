@@ -164,8 +164,6 @@ const generateAndSaveResultImage = async (data: IData, filesDir: string, imagesD
 /////////////////////////////////////////////////////
 
 const testImageGeneration = async () => {
-  const apiToken = getStringEnvVar('API_KEY')
-  const apiUrl = getStringEnvVar('API_URL')
   const imagesDir = getStringEnvVar('OUTPUT_IMAGES_DIR')
 
   //get new data
@@ -181,10 +179,8 @@ const testImageGeneration = async () => {
 // Token data updater
 /////////////////////////////////////////////////////
 
-const updateTheTokenWithTheNewImage = async (index: number) => {
-  console.log('Starting token updating process...', index);
-
-  const apiUrl = getStringEnvVar('API_URL')
+const updateTheTokenWithTheNewImage = async () => {
+  console.log('Starting token updating process...');
 
   const mnemonic = getStringEnvVar('COLLECTION_ADMIN_MNEMONIC')
   const sdkRestUrl = getStringEnvVar('SDK_REST_URL')
@@ -205,6 +201,13 @@ const updateTheTokenWithTheNewImage = async (index: number) => {
   const balance = await sdk.balance.get({address})
   const balanceValueBefore = parseFloat(balance.availableBalance.amount)
   console.log(`Admin address is ${address}, admin balance is ${balanceValueBefore.toFixed(3)} ${balance.availableBalance.unit}`)
+
+
+  const existingToken = await sdk.tokens.get({collectionId, tokenId})
+  const previousCityName = (existingToken?.attributes?.[1]?.value as {_: string})?._ || null
+  const filteredCities = config.cities.filter(city => city.name !== previousCityName)
+  const index = Math.floor(Math.random() * filteredCities.length)
+  console.log(`The new city is ${filteredCities[index].name}`)
 
   // ensure that we can update the token
   const admins = (await sdk.collections.admins({collectionId}))
@@ -267,7 +270,7 @@ const runCronJob = async () => {
       await new Promise(r => setTimeout(r, 500))
       console.log('Starting task on cron:', formatInTimeZone(new Date(), 'Europe/Moscow', `HH:mm:ss dd.MM.yyyy 'MSK'`), `next job at`, job.nextDate().toFormat(`HH:mm:ss dd.MM.yyyy 'MSK'`))
 
-      await updateTheTokenWithTheNewImage(0)
+      await updateTheTokenWithTheNewImage()
 
       console.log('Next cron job is at', job.nextDate().toFormat(`HH:mm:ss dd.MM.yyyy 'MSK'`), '\n')
     },
@@ -410,7 +413,7 @@ const run = async () => {
   } else if (options.createCollectionAndToken) {
     await createCollectionAndToken()
   } else if (options.update) {
-    await updateTheTokenWithTheNewImage(+options.index || 0)
+    await updateTheTokenWithTheNewImage()
   } else if (options.cron) {
     await runCronJob()
   } else {
