@@ -123,7 +123,7 @@ const DataToPropertyMap: { [K in keyof IData]: string } = {
 const generateAndSaveResultImage = async (data: IData, filesDir: string, imagesDir: string) => {
   const imageScale = 0.25;
 
-  const image = await loadImage(`${filesDir}/images/${data.filename}`)
+  const image = await loadImage(`${filesDir}/${data.filename}`)
   registerFont(`${filesDir}/Rubik-Medium.ttf`, {family: 'Rubik', weight: 'Medium'})
 
   const canvas = createCanvas(image.width*imageScale, image.height*imageScale)
